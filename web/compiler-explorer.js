@@ -416,6 +416,7 @@ function cHarness(spec, candidateCode) {
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+FILE* open_memstream(char** buffer, size_t* size);
 struct ListNode { int val; struct ListNode* next; };
 struct TreeNode { int val; struct TreeNode* left; struct TreeNode* right; };
 struct Node { int val; struct Node* next; struct Node* random; struct Node** neighbors; int numNeighbors; struct Node* left; struct Node* right; bool isLeaf; struct Node* topLeft; struct Node* topRight; struct Node* bottomLeft; struct Node* bottomRight; };
@@ -453,9 +454,15 @@ static const char* quad_tree_error(struct Node* node, const struct QuadTreePath*
 static void json_quad_tree(FILE* out, struct Node* root) { int visited = 0; const char* error = quad_tree_error(root, NULL, &visited); if (error) { fputs("null,\\"error\\":", out); json_string(out, error); return; } int printed = 0; fputc('[', out); json_quad_tree_visit(out, root, &printed); fputc(']', out); }
 ${candidateCode}
 int main(void) {
-  printf("{\\"results\\":[");
+  char* resultsText = NULL;
+  size_t resultsSize = 0;
+  FILE* results = open_memstream(&resultsText, &resultsSize);
+  if (!results) return 1;
+  fprintf(results, "{\\"results\\":[");
 ${spec.cases.map((testCase, index) => cCase(spec, testCase, index)).join("\n")}
-  printf("]}");
+  fprintf(results, "]}");
+  fclose(results);
+  fputs(resultsText, stdout);
   return 0;
 }`;
 }
@@ -464,7 +471,7 @@ function cCase(spec, testCase, index) {
   const declarations = spec.paramTypes
     .map((type, paramIndex) => cDeclaration(spec, testCase, type, paramIndex))
     .join("\n");
-  return `  ${index ? 'printf(",");' : ""}
+  return `  ${index ? 'fprintf(results, ",");' : ""}
   {
 ${declarations}
     int returnSize = 0;
@@ -472,9 +479,9 @@ ${declarations}
     clock_t start = clock();
     ${cCall(spec)}
     double elapsed = (double)(clock() - start) * 1000.0 / CLOCKS_PER_SEC;
-    printf("{\\"actual\\":");
+    fprintf(results, "{\\"actual\\":");
     ${cPrintActual(spec)}
-    printf(",\\"timeMs\\":%.3f}", elapsed);
+    fprintf(results, ",\\"timeMs\\":%.3f}", elapsed);
   }`;
 }
 
@@ -520,34 +527,37 @@ function cPrintActual(spec) {
     : spec.returnType;
   if (Number.isInteger(spec.outputPrefixParam)) {
     const prefixName = spec.paramNames[spec.outputPrefixParam];
-    return `if (actualSize < 0 || actualSize > ${prefixName}Size) { printf("null,\\"error\\":"); json_string(stdout, "Return value must be an integer length for the kept prefix."); } else { json_int_array(stdout, ${prefixName}, actualSize); }`;
+    return `if (actualSize < 0 || actualSize > ${prefixName}Size) { fprintf(results, "null,\\"error\\":"); json_string(results, "Return value must be an integer length for the kept prefix."); } else { json_int_array(results, ${prefixName}, actualSize); }`;
   }
-  if (spec.outputType === "linkedList") return `json_list(stdout, ${name});`;
-  if (spec.outputType === "binaryTree") return `json_tree(stdout, ${name});`;
+  if (spec.outputType === "linkedList") return `json_list(results, ${name});`;
+  if (spec.outputType === "binaryTree") return `json_tree(results, ${name});`;
   if (spec.outputType === "randomList")
-    return `json_random_list(stdout, ${name});`;
-  if (spec.outputType === "graphNode") return `json_graph(stdout, ${name});`;
-  if (spec.outputType === "nextTree") return `json_next_tree(stdout, ${name});`;
-  if (spec.outputType === "quadTree") return `json_quad_tree(stdout, ${name});`;
-  if (type === "boolean") return `printf(${name} ? "true" : "false");`;
-  if (type === "integer") return `printf("%d", ${name});`;
-  if (type === "double") return `json_double(stdout, ${name});`;
-  if (type === "string") return `json_string(stdout, ${name});`;
+    return `json_random_list(results, ${name});`;
+  if (spec.outputType === "graphNode") return `json_graph(results, ${name});`;
+  if (spec.outputType === "nextTree")
+    return `json_next_tree(results, ${name});`;
+  if (spec.outputType === "quadTree")
+    return `json_quad_tree(results, ${name});`;
+  if (type === "boolean")
+    return `fprintf(results, ${name} ? "true" : "false");`;
+  if (type === "integer") return `fprintf(results, "%d", ${name});`;
+  if (type === "double") return `json_double(results, ${name});`;
+  if (type === "string") return `json_string(results, ${name});`;
   if (type === "integer[]" || type === "list<integer>")
-    return `json_int_array(stdout, ${name}, ${Number.isInteger(spec.outputParam) ? `${name}Size` : "returnSize"});`;
+    return `json_int_array(results, ${name}, ${Number.isInteger(spec.outputParam) ? `${name}Size` : "returnSize"});`;
   if (type === "double[]" || type === "list<double>")
-    return `json_double_array(stdout, ${name}, ${Number.isInteger(spec.outputParam) ? `${name}Size` : "returnSize"});`;
+    return `json_double_array(results, ${name}, ${Number.isInteger(spec.outputParam) ? `${name}Size` : "returnSize"});`;
   if (type === "string[]" || type === "list<string>")
-    return `json_string_array(stdout, ${name}, ${Number.isInteger(spec.outputParam) ? `${name}Size` : "returnSize"});`;
+    return `json_string_array(results, ${name}, ${Number.isInteger(spec.outputParam) ? `${name}Size` : "returnSize"});`;
   if (type === "integer[][]" || type === "list<list<integer>>")
-    return `json_int_matrix(stdout, ${name}, ${Number.isInteger(spec.outputParam) ? `${name}Size` : "returnSize"}, ${Number.isInteger(spec.outputParam) ? `${name}ColSize` : "returnColumnSizes"});`;
+    return `json_int_matrix(results, ${name}, ${Number.isInteger(spec.outputParam) ? `${name}Size` : "returnSize"}, ${Number.isInteger(spec.outputParam) ? `${name}ColSize` : "returnColumnSizes"});`;
   if (type === "character[][]")
-    return `json_char_matrix(stdout, ${name}, ${name}Size, ${name}ColSize);`;
+    return `json_char_matrix(results, ${name}, ${name}Size, ${name}ColSize);`;
   if (type === "list<list<string>>")
-    return `json_string_matrix(stdout, ${name}, returnSize, returnColumnSizes);`;
-  if (type === "ListNode") return `json_list(stdout, ${name});`;
-  if (type === "TreeNode") return `json_tree(stdout, ${name});`;
-  return `printf("null");`;
+    return `json_string_matrix(results, ${name}, returnSize, returnColumnSizes);`;
+  if (type === "ListNode") return `json_list(results, ${name});`;
+  if (type === "TreeNode") return `json_tree(results, ${name});`;
+  return `fprintf(results, "null");`;
 }
 
 function cppHarness(spec, candidateCode) {

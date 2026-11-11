@@ -147,7 +147,7 @@ test("harness generator builds one batched function harness", () => {
     c,
     /int\* matchDisputedCharge\(int\* nums, int numsSize, int target, int\* returnSize\)/,
   );
-  assert.match(c, /json_int_array\(stdout, actual, returnSize\)/);
+  assert.match(c, /json_int_array\(results, actual, returnSize\)/);
   assert.match(c, /results/);
   assert.match(cpp, /class Solution/);
   assert.match(cpp, /#include <unordered_map>/);
@@ -764,6 +764,50 @@ bool isRearrangedCode(char* s, char* t) {
       },
     );
   }
+
+  it(
+    "C harness keeps every result when the solution prints to stdout",
+    { skip: noCc },
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "codetrial-c-stdout-"));
+      try {
+        const source = join(dir, "solution.c");
+        const binary = join(dir, "solution");
+        // A debugging printf, with and without a newline, and a brace that
+        // would open a JSON document of its own.
+        writeFileSync(
+          source,
+          generateHarness(
+            "c",
+            judges["two-sum"],
+            `int* matchDisputedCharge(int* nums, int numsSize, int target, int* returnSize) {
+    for (int i = 0; i < numsSize; i++)
+        for (int j = i + 1; j < numsSize; j++)
+            if (nums[i] + nums[j] == target) {
+                printf("i=%d j=%d\\n{", i, j);
+                int* pair = malloc(2 * sizeof(int));
+                pair[0] = i; pair[1] = j; *returnSize = 2;
+                return pair;
+            }
+    *returnSize = 0;
+    return NULL;
+}`,
+          ),
+        );
+        await run("cc", ["-std=c17", source, "-o", binary]);
+        const { stdout } = await run(binary, [], { encoding: "utf8" });
+        assert.ok(stdout.startsWith("i=0 j=1\n{"));
+        const parsed = parseCompilerResults(stdout);
+        assert.equal(parsed.setupError, undefined);
+        assert.deepEqual(
+          parsed.results.map((result) => result.actual),
+          judges["two-sum"].cases.map((testCase) => testCase.expected),
+        );
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   for (const value of ["INFINITY", "-INFINITY", "NAN"]) {
     it(
@@ -2529,7 +2573,7 @@ test("harness generator prepares adapter arguments and mutable char matrices", (
   );
   assert.match(
     cSurrounded,
-    /json_char_matrix\(stdout, board, boardSize, boardColSize\)/,
+    /json_char_matrix\(results, board, boardSize, boardColSize\)/,
   );
   assert.match(cycle, /ListNode\* head = listNode\(\{3, 2, 0, -4\}, 1\)/);
   assert.match(cycle, /solution\.hasHandoffLoop\(head\)/);
@@ -2570,7 +2614,7 @@ test("harness generator prepares adapter arguments and mutable char matrices", (
   assert.match(nextTree, /next pointers do not match the tree level order/);
   assert.match(quadTree, /quadTreeToJson\(actual\)/);
   assert.match(quadTree, /topLeft/);
-  assert.match(cQuadTree, /json_quad_tree\(stdout, actual\)/);
+  assert.match(cQuadTree, /json_quad_tree\(results, actual\)/);
   assert.match(javaQuadTree, /quadTreeJson\(\(Node\) actual\)/);
 });
 
